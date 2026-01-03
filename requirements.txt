@@ -1,0 +1,9 @@
+numpy
+pandas
+matplotlib
+gymnasium
+stable-baselines3
+py_vollib
+torch
+streamlit
+jupyter
