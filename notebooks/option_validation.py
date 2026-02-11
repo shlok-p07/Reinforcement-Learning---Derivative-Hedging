@@ -35,7 +35,7 @@ axs[0,1].grid(True)
 
 
 axs[1,0].plot(spots,gvs,marker='x',color='red')
-axs[1,0].set_title("Price Vs. Spot")
+axs[1,0].set_title("Gamma Vs. Spot")
 axs[1,0].set_xlabel("Spot Price (S)")
 axs[1,0].set_ylabel("Gamma")
 axs[1,0].grid(True)
