@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 class Simulator:
     '''Geometric Brownian Motion simulator for asset prices.'''
-    def __init__(self, s0: float, mu: float, sigma: float, dt: float, seed: Optional[int]):
+    def __init__(self, s0: float, mu: float, sigma: float, dt: float, seed: Optional[int] = None):
         '''
         Initializing simulator variables per the Geometric Brownian Motion model.
         '''
