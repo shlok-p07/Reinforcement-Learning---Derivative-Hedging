@@ -9,12 +9,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Add parent directory to path for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
+script_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 sys.path.insert(0, os.path.dirname(script_dir))
 
 from utils.market_simulator import Simulator
 from utils.black_scholes import EuropeanCallOption
-from envs.hedging_envs import DeltaHedgingEnv
+from envs.hedging_env import DeltaHedgingEnv
 
 
 # 2. Base Parameters
@@ -78,7 +78,12 @@ def run_single_hedge(
     return env.portfolio_val
 
 # 4. Monte Carlo Simulation
-def run_monte_carlo(n_paths: int, **kwargs) -> np.ndarray:
+def run_monte_carlo(
+    n_paths: int,
+    sigma: float = SIGMA,
+    transaction_cost: float = TRANSACTION_COST,
+    rebalancing_frequency: int = 1,
+) -> np.ndarray:
     """
     Runs multiple hedging paths and returns array of final P&Ls.
     """
@@ -87,14 +92,14 @@ def run_monte_carlo(n_paths: int, **kwargs) -> np.ndarray:
         pnl = run_single_hedge(
             s0=S0,
             mu=MU,
-            sigma=SIGMA,
+            sigma=sigma,
             dt=DT,
             maturity=MATURITY,
             strike=STRIKE,
             rate=RATE,
-            transaction_cost=TRANSACTION_COST,
+            transaction_cost=transaction_cost,
             seed=path_id,  # Different seed for each path
-            **kwargs
+            rebalancing_frequency=rebalancing_frequency,
         )
         pnls.append(pnl)
     

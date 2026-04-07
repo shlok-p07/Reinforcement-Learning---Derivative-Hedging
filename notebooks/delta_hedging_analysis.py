@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(script_dir))
 
 from utils.market_simulator import Simulator
 from utils.black_scholes import EuropeanCallOption
-from envs.hedging_envs import DeltaHedgingEnv
+from envs.hedging_env import DeltaHedgingEnv
 
 print("✓ Imports successful")
 
