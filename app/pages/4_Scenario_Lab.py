@@ -18,9 +18,7 @@ st.set_page_config(page_title="Scenario Lab | RL Hedging", page_icon=None, layou
 st.markdown(inject_css(), unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────
 # Sidebar — parameter controls
-# ─────────────────────────────────────────────
 
 with st.sidebar:
     st.markdown("## SCENARIO LAB")
@@ -28,7 +26,7 @@ with st.sidebar:
 
     st.markdown("**Market Parameters**")
     sigma_model    = st.slider("Model Volatility (σ)", 0.05, 0.60, 0.20, step=0.01, format="%.2f")
-    sigma_realized = st.slider("Realised Volatility (σ_real)", 0.05, 0.60, 0.20, step=0.01, format="%.2f")
+    sigma_realized = st.slider("Realized Volatility (σ_real)", 0.05, 0.60, 0.20, step=0.01, format="%.2f")
     tc_rate        = st.slider("Transaction Cost Rate", 0.0, 0.02, 0.001, step=0.001, format="%.3f")
     spot0          = st.slider("Initial Spot (S₀)", 80, 120, 100, step=5)
     strike         = st.slider("Strike (K)", 80, 120, 100, step=5)
@@ -51,9 +49,7 @@ with st.sidebar:
     run_btn = st.button("▶  RUN COMPARISON", type="primary", width="stretch")
 
 
-# ─────────────────────────────────────────────
 # Header
-# ─────────────────────────────────────────────
 
 st.markdown('<div class="ws-title">SCENARIO LABORATORY</div>', unsafe_allow_html=True)
 st.markdown('<div class="ws-subtitle">Adjust market parameters and compare strategies in real time</div>', unsafe_allow_html=True)
@@ -81,9 +77,7 @@ st.markdown(config_html, unsafe_allow_html=True)
 st.markdown('<hr style="border-color:#1e3a5f;">', unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────
 # Run simulation
-# ─────────────────────────────────────────────
 
 if "lab_results" not in st.session_state:
     st.session_state.lab_results = None
@@ -147,9 +141,7 @@ if run_btn and strategies:
     st.success(f"Done! {n_episodes} episodes per strategy.")
 
 
-# ─────────────────────────────────────────────
 # Display results
-# ─────────────────────────────────────────────
 
 if st.session_state.lab_results:
     res = st.session_state.lab_results

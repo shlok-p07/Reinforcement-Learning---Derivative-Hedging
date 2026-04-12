@@ -6,9 +6,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 
-# ──────────────────────────────────────────────
 # Palette
-# ──────────────────────────────────────────────
 BG        = "#070d1a"
 BG2       = "#0d1b2a"
 BORDER    = "#1e3a5f"
@@ -53,9 +51,7 @@ def _apply(fig) -> go.Figure:
     return fig
 
 
-# ──────────────────────────────────────────────
 # Live episode chart (4-panel)
-# ──────────────────────────────────────────────
 
 def live_episode_chart(df: pd.DataFrame, strategy: str = "agent") -> go.Figure:
     """4-panel live hedging dashboard built incrementally."""
@@ -135,9 +131,166 @@ def live_episode_chart(df: pd.DataFrame, strategy: str = "agent") -> go.Figure:
     return fig
 
 
-# ──────────────────────────────────────────────
+# Animated episode chart (client-side — no server re-renders between frames)
+
+def animated_episode_chart(
+    full_df: pd.DataFrame,
+    strategy: str = "agent",
+    frame_duration_ms: int = 70,
+) -> go.Figure:
+    """
+    Pre-build every animation frame and embed them in the figure JSON.
+    Plotly plays back entirely in the browser — no Python loop, no widget
+    destroy-and-recreate, no blink.
+    """
+    if full_df is None or len(full_df) < 2:
+        fig = go.Figure()
+        fig.update_layout(**_LAYOUT, height=520,
+                          title_text="No episode data", title_font=dict(color=RED))
+        return fig
+
+    color  = STRATEGY_COLOR.get(strategy, GREEN)
+    strike = float(full_df["strike"].iloc[0]) if "strike" in full_df.columns else None
+
+    # Fixed axis ranges computed from the full episode so axes never jump
+    x_max   = int(full_df["step"].max())
+    s_pad   = (full_df["spot"].max() - full_df["spot"].min()) * 0.05 or 1.0
+    pv_abs  = max(abs(full_df["portfolio_value"]).max() * 1.15, 0.1)
+    dv_abs  = max(abs(full_df["delta_v"].fillna(0)).max() * 1.15, 0.05)
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=["Asset Price", "Hedge Position vs Delta",
+                        "Portfolio Value (P&L)", "Step Hedging Error"],
+        vertical_spacing=0.14,
+        horizontal_spacing=0.10,
+    )
+
+    # ── Initial traces (first 2 rows so lines have something to render) ──
+    init = full_df.iloc[:2]
+    init_steps = init["step"].tolist()
+    init_pv    = init["portfolio_value"].tolist()
+    init_dv    = init["delta_v"].fillna(0).tolist()
+    pv_color_i = GREEN if init_pv[-1] >= 0 else RED
+    pv_fill_i  = "rgba(0,212,170,0.10)" if init_pv[-1] >= 0 else "rgba(255,75,75,0.10)"
+
+    # Trace indices must stay stable — 0..4
+    fig.add_trace(go.Scatter(
+        x=init_steps, y=init["spot"].tolist(), name="Spot Price",
+        line=dict(color=BLUE, width=2),
+        fill="tozeroy", fillcolor="rgba(74,158,255,0.07)",
+    ), row=1, col=1)                                               # trace 0
+
+    fig.add_trace(go.Scatter(
+        x=init_steps, y=init["delta"].tolist(), name="BS Delta",
+        line=dict(color=BLUE, width=1.5, dash="dot"),
+    ), row=1, col=2)                                               # trace 1
+
+    fig.add_trace(go.Scatter(
+        x=init_steps, y=init["hedge_position"].tolist(), name="RL Hedge",
+        line=dict(color=color, width=2.5),
+        fill="tonexty", fillcolor="rgba(0,212,170,0.08)",
+    ), row=1, col=2)                                               # trace 2
+
+    fig.add_trace(go.Scatter(
+        x=init_steps, y=init_pv, name="Portfolio V",
+        line=dict(color=pv_color_i, width=2.5),
+        fill="tozeroy", fillcolor=pv_fill_i,
+    ), row=2, col=1)                                               # trace 3
+
+    fig.add_trace(go.Bar(
+        x=init_steps, y=init_dv, name="ΔV",
+        marker_color=[GREEN if v >= 0 else RED for v in init_dv],
+        opacity=0.8,
+    ), row=2, col=2)                                               # trace 4
+
+    # ── Animation frames ──
+    frames = []
+    for i in range(2, len(full_df) + 1):
+        p      = full_df.iloc[:i]
+        s_i    = p["step"].tolist()
+        pv_i   = p["portfolio_value"].tolist()
+        dv_i   = p["delta_v"].fillna(0).tolist()
+        pv_c   = GREEN if pv_i[-1] >= 0 else RED
+        pv_f   = "rgba(0,212,170,0.10)" if pv_i[-1] >= 0 else "rgba(255,75,75,0.10)"
+        frames.append(go.Frame(
+            traces=[0, 1, 2, 3, 4],
+            name=str(i),
+            data=[
+                go.Scatter(x=s_i, y=p["spot"].tolist()),
+                go.Scatter(x=s_i, y=p["delta"].tolist()),
+                go.Scatter(x=s_i, y=p["hedge_position"].tolist()),
+                go.Scatter(x=s_i, y=pv_i,
+                           line=dict(color=pv_c, width=2.5), fillcolor=pv_f),
+                go.Bar(x=s_i, y=dv_i,
+                       marker_color=[GREEN if v >= 0 else RED for v in dv_i]),
+            ],
+        ))
+    fig.frames = frames
+
+    transition_ms = max(frame_duration_ms - 10, 0)
+    fig.update_layout(
+        **_LAYOUT,
+        height=540,
+        showlegend=True,
+        title_text=f"Hedging Episode — Strategy: <b>{strategy.upper()}</b>",
+        title_font=dict(color=GREEN, size=14),
+        updatemenus=[dict(
+            type="buttons", showactive=False,
+            y=-0.10, x=0.5, xanchor="center", yanchor="top",
+            bgcolor=BG2, bordercolor=BORDER, font=dict(color=TEXT, size=11),
+            buttons=[
+                dict(label="▶  Play", method="animate",
+                     args=[None, dict(
+                         frame=dict(duration=frame_duration_ms, redraw=True),
+                         transition=dict(duration=transition_ms, easing="linear"),
+                         fromcurrent=True, mode="immediate",
+                     )]),
+                dict(label="⏸ Pause", method="animate",
+                     args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                        transition=dict(duration=0),
+                                        mode="immediate")]),
+            ],
+        )],
+        sliders=[dict(
+            active=0,
+            steps=[dict(
+                method="animate",
+                label=str(i),
+                args=[[str(i)], dict(frame=dict(duration=0, redraw=True),
+                                     transition=dict(duration=0),
+                                     mode="immediate")],
+            ) for i in range(2, len(full_df) + 1)],
+            x=0.0, y=-0.04, len=1.0,
+            pad=dict(t=30),
+            currentvalue=dict(prefix="Step: ", font=dict(color=TEXT_DIM, size=10)),
+            font=dict(color=TEXT_DIM, size=9),
+            bgcolor=BG2, bordercolor=BORDER,
+        )],
+    )
+
+    # Fixed axis ranges — prevent jumping during playback
+    fig.update_xaxes(range=[0, x_max + 1])
+    fig.update_yaxes(range=[full_df["spot"].min() - s_pad,
+                             full_df["spot"].max() + s_pad], row=1, col=1)
+    fig.update_yaxes(range=[-0.05, 1.05], row=1, col=2)
+    fig.update_yaxes(range=[-pv_abs, pv_abs], row=2, col=1)
+    fig.update_yaxes(range=[-dv_abs, dv_abs], row=2, col=2)
+
+    if strike is not None:
+        fig.add_hline(y=strike, line_dash="dot", line_color=GOLD,
+                      opacity=0.6, row=1, col=1)
+    fig.add_hline(y=0, line_color=GREY, line_dash="dot", opacity=0.5, row=2, col=1)
+    fig.add_hline(y=0, line_color=GREY, line_dash="dot", opacity=0.5, row=2, col=2)
+
+    for ann in fig.layout.annotations:
+        ann.font.color = TEXT_DIM
+        ann.font.size  = 11
+
+    return fig
+
+
 # P&L distribution
-# ──────────────────────────────────────────────
 
 def pnl_distribution(pnls_by_strategy: dict[str, np.ndarray]) -> go.Figure:
     """Overlapping KDE curves + VaR markers."""
@@ -180,9 +333,7 @@ def pnl_distribution(pnls_by_strategy: dict[str, np.ndarray]) -> go.Figure:
     return fig
 
 
-# ──────────────────────────────────────────────
 # Sharpe bar chart
-# ──────────────────────────────────────────────
 
 def sharpe_bars(df: pd.DataFrame) -> go.Figure:
     """Grouped bar chart of Sharpe ratios by scenario."""
@@ -218,9 +369,7 @@ def sharpe_bars(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# ──────────────────────────────────────────────
 # Risk-return scatter
-# ──────────────────────────────────────────────
 
 def risk_return_scatter(df: pd.DataFrame) -> go.Figure:
     """Mean P&L vs Std P&L — each dot is a strategy × scenario."""
@@ -260,9 +409,7 @@ def risk_return_scatter(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# ──────────────────────────────────────────────
 # VaR / CVaR comparison
-# ──────────────────────────────────────────────
 
 def var_cvar_bars(df: pd.DataFrame, scenario: str = "base") -> go.Figure:
     """Side-by-side VaR-95 and CVaR-95 shown as positive loss magnitude (standard risk convention)."""
@@ -308,9 +455,7 @@ def var_cvar_bars(df: pd.DataFrame, scenario: str = "base") -> go.Figure:
     return fig
 
 
-# ──────────────────────────────────────────────
 # Learning curves
-# ──────────────────────────────────────────────
 
 def learning_curves(ppo_data: dict | None, sac_data: dict | None) -> go.Figure:
     """Training reward curves with confidence bands."""
@@ -343,9 +488,7 @@ def learning_curves(ppo_data: dict | None, sac_data: dict | None) -> go.Figure:
     return fig
 
 
-# ──────────────────────────────────────────────
 # Transaction cost comparison
-# ──────────────────────────────────────────────
 
 def tc_comparison(df: pd.DataFrame) -> go.Figure:
     """Average TC paid per episode across scenarios."""
@@ -374,13 +517,26 @@ def tc_comparison(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
-# ──────────────────────────────────────────────
 # CSS injection
-# ──────────────────────────────────────────────
 
 WS_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono&display=swap');
+
+/* ── Anti-flicker for fragments and live updates ─────────────────────────────
+   Streamlit fades stale elements to ~33% opacity while re-rendering a fragment.
+   That opacity drop IS the blink. Force it to 1 and remove all transitions on
+   updating containers so the swap is invisible rather than a flash.          */
+[data-stale="true"]         { opacity: 1 !important; }
+[data-stale="true"] *       { opacity: 1 !important; transition: none !important; }
+.stElementContainer         { transition: none !important; }
+[data-testid="stVerticalBlock"] { transition: none !important; }
+
+/* Plotly chart containers — background must match page so chart swaps
+   don't flash a white/blank frame between renders.                          */
+[data-testid="stPlotlyChart"] > div { background: #070d1a !important; }
+iframe                        { background: #070d1a !important; border: none !important; }
+/* ─────────────────────────────────────────────────────────────────────────── */
 
 /* ── Global ── */
 html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
@@ -454,9 +610,7 @@ def inject_css() -> str:
     return WS_CSS
 
 
-# ──────────────────────────────────────────────
 # Helpers
-# ──────────────────────────────────────────────
 
 def _hex_to_rgb(h: str) -> str:
     h = h.lstrip("#")

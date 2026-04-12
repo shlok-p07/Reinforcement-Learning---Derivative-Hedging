@@ -7,12 +7,6 @@ randomly samples a 30-day window, normalises prices to start at 100
 so the agent learns from relative returns rather than absolute levels,
 and uses that window's realised volatility for Black-Scholes pricing.
 
-The agent therefore trains on genuine market dynamics:
-  - Fat tails, skewness, leptokurtosis
-  - Volatility clustering and GARCH-like persistence
-  - Real market events (crashes, rallies, slow grinds)
-  - Autocorrelated volatility regimes
-
 Data requirements
 -----------------
   data/spy_daily.csv must contain at minimum:
@@ -91,7 +85,6 @@ class RealDataHedgingEnv(gym.Env):
         self.augment_vol       = augment_vol
         self.dt                = 1 / 252
 
-        # ── Load and validate price history ──────────────────────────
         if not os.path.exists(data_path):
             raise FileNotFoundError(
                 f"Price data not found at: {data_path}\n"
@@ -114,11 +107,9 @@ class RealDataHedgingEnv(gym.Env):
                 f"only {n} available.  Run generate_data.py to fetch more history."
             )
 
-        # Valid episode starting indices
         self._starts = np.arange(0, n - window_size)
         self._rng    = np.random.default_rng(seed)
 
-        # ── Spaces (identical to RLHedgingEnv for model compatibility) ─
         self.observation_space = spaces.Box(
             low =np.array([0.0, 0.0, 0.0, 0.0, -1.5, -1.0], dtype=np.float32),
             high=np.array([3.0, 1.0, 1.0,  2.0,  1.5,  1.0], dtype=np.float32),
@@ -128,7 +119,6 @@ class RealDataHedgingEnv(gym.Env):
             high=np.array([ 1.5], dtype=np.float32),
         )
 
-        # Episode state — initialised here so type checkers are happy
         self._window_prices: np.ndarray = np.full(window_size + 1, 100.0)
         self._step_idx:  int   = 0
         self._start_idx: int   = 0
@@ -146,19 +136,14 @@ class RealDataHedgingEnv(gym.Env):
             self.strike, self.sigma, self.rate
         )
 
-    # ── Gymnasium API ────────────────────────────────────────────────
-
     def reset(self, seed: int | None = None, options=None):
         super().reset(seed=seed)
         if seed is not None:
             self._rng = np.random.default_rng(seed)
 
-        # ── Sample a random historical 30-day window ──────────────────
         self._start_idx = int(self._rng.choice(self._starts))
         raw = self._prices[self._start_idx : self._start_idx + self.window_size + 1]
-
-        # Normalise: episode always starts at exactly 100
-        self._window_prices = raw / raw[0] * 100.0
+        self._window_prices = raw / raw[0] * 100.0   # normalise to S₀=100
         self._step_idx = 0
 
         # Realised vol for this window — floor at 5%, cap at 80%
@@ -168,11 +153,9 @@ class RealDataHedgingEnv(gym.Env):
         self.sigma = float(np.clip(raw_vol, 0.05, 0.80))
 
         if self.augment_vol:
-            # Scale by random factor to create additional vol-regime variety
             scale = float(self._rng.uniform(0.7, 1.3))
             self.sigma = float(np.clip(self.sigma * scale, 0.05, 0.80))
 
-        # Episode parameters
         self.s0       = 100.0
         self.spot     = float(self._window_prices[0])  # = 100.0
         self.maturity = self.window_size * self.dt
@@ -193,25 +176,21 @@ class RealDataHedgingEnv(gym.Env):
         )
         prev_v = self.portfolio_value
 
-        # ── Advance to next real historical price ─────────────────────
         self._step_idx += 1
         self.spot = float(self._window_prices[self._step_idx])
         self.tau  = max(self.tau - self.dt, 1e-8)
 
-        # ── Rebalance ─────────────────────────────────────────────────
         trade   = action - self.stock_position
         tc      = abs(trade) * self.spot * self.transaction_cost
         self.cash          -= trade * self.spot + tc
         self.stock_position = action
         self.total_tc      += tc
 
-        # ── Mark to market ────────────────────────────────────────────
         option_value         = self.option.price(self.spot, self.tau)
         self.portfolio_value = (
             self.stock_position * self.spot + self.cash - option_value
         )
 
-        # ── Reward: penalise hedging-error variance, risk-averse ──────
         delta_v = self.portfolio_value - prev_v
         reward  = (
             -self.lambda_hedge * delta_v ** 2
@@ -231,14 +210,12 @@ class RealDataHedgingEnv(gym.Env):
             "option_value":    option_value,
             "spot":            self.spot,
             "tau":             self.tau,
-            "regime":          0,       # no synthetic regime in real data
+            "regime":          0,
         }
         return self._obs(), reward, terminated, False, info
 
     def render(self, mode="human"):  # noqa: ARG002
         pass
-
-    # ── Internal ─────────────────────────────────────────────────────
 
     def _obs(self) -> np.ndarray:
         tau_safe = max(self.tau, 1e-8)
@@ -253,8 +230,6 @@ class RealDataHedgingEnv(gym.Env):
             np.log(self.spot / self.strike),
         ], dtype=np.float32)
         return np.clip(obs, self.observation_space.low, self.observation_space.high)
-
-    # ── Convenience ──────────────────────────────────────────────────
 
     @property
     def n_windows(self) -> int:

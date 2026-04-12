@@ -1,51 +1,29 @@
 """
-PPO training on real SPY market data.
+PPO training on real SPY market data (~1,200 distinct 30-day windows, 5-year history).
 
-The agent trains by replaying random 30-day windows sampled from 5 years
-of real SPY daily price history.  Each episode the environment picks a
-different historical window, so the agent trains on genuine market dynamics
-(fat tails, vol clustering, crashes, rallies) rather than synthetic GBM.
-
-~1,200 distinct 30-day windows available from 5 years of SPY data.
-With 8 parallel envs each independently sampling, the agent sees highly
-varied market conditions throughout training.
-
-Continuation training
----------------------
-If models/ppo_hedger.zip already exists the script loads it and continues
-training from its current weights (lower LR for fine-tuning).  Delete the
-file to restart from scratch.
-
-Hyperparameter rationale
-------------------------
-n_steps=2048       shorter rollouts suit the 30-step episode structure
-batch_size=256     stable gradient estimates
-n_epochs=10        standard PPO
-gamma=0.99         near-undiscounted (30-step episodes)
-gae_lambda=0.95    standard GAE for variance reduction
-clip_range=0.2     conservative clipping
-ent_coef=0.005     small entropy bonus prevents premature policy collapse
-learning_rate=1e-4 lower than default; option P&L rewards have high variance
+Loads and continues from models/ppo_hedger.zip if it exists; delete to retrain from scratch.
+Hyperparams: n_steps=2048, batch_size=256, n_epochs=10, γ=0.99, λ=0.95, clip=0.2,
+             ent_coef=0.005, lr=1e-4 (reduced to 5e-5 when fine-tuning).
 """
 
+import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import (
-    EvalCallback,
-    CheckpointCallback,
+    BaseCallback,
     CallbackList,
+    CheckpointCallback,
+    EvalCallback,
 )
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 from envs.real_data_env import RealDataHedgingEnv
 
-# ------------------------------------------------------------------
 # Config
-# ------------------------------------------------------------------
 
 ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(ROOT, "data", "spy_daily.csv")
@@ -67,6 +45,30 @@ N_EVAL_EPISODES  = 100
 MODEL_PATH      = "models/ppo_hedger"
 CHECKPOINT_DIR  = "models/ppo_checkpoints"
 LOG_DIR         = "results/learning_curves/ppo"
+PROGRESS_PATH   = os.path.join(ROOT, LOG_DIR, "progress.json")
+
+
+class ProgressFileCallback(BaseCallback):
+    """Writes current timestep to a JSON file every N steps for live UI monitoring."""
+
+    def __init__(self, path: str, total_steps: int, write_every: int = 2_000):
+        super().__init__(verbose=0)
+        self._path = path
+        self._total = total_steps
+        self._every = write_every
+        self._next_write = write_every
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps >= self._next_write:
+            self._next_write = self.num_timesteps + self._every
+            try:
+                with open(self._path, "w") as fh:
+                    json.dump(
+                        {"timesteps": int(self.num_timesteps), "total": self._total}, fh
+                    )
+            except OSError:
+                pass
+        return True
 
 
 def make_env(seed: int | None = None):
@@ -86,6 +88,10 @@ if __name__ == "__main__":
     os.makedirs(LOG_DIR, exist_ok=True)
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     os.makedirs("models", exist_ok=True)
+
+    # Clear stale progress file so the UI starts from 0
+    if os.path.exists(PROGRESS_PATH):
+        os.remove(PROGRESS_PATH)
 
     # Report how many real windows are available
     _probe = RealDataHedgingEnv(**ENV_KWARGS)
@@ -111,6 +117,7 @@ if __name__ == "__main__":
             name_prefix="ppo",
             verbose=0,
         ),
+        ProgressFileCallback(PROGRESS_PATH, TOTAL_TIMESTEPS, write_every=2_000),
     ])
 
     existing = f"{MODEL_PATH}.zip"
@@ -143,7 +150,7 @@ if __name__ == "__main__":
         total_timesteps=TOTAL_TIMESTEPS,
         callback=callbacks,
         progress_bar=True,
-        reset_num_timesteps=False,
+        reset_num_timesteps=True,
     )
     model.save(MODEL_PATH)
 

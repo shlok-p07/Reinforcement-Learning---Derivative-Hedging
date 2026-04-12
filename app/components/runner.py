@@ -15,12 +15,8 @@ from envs.real_data_env   import RealDataHedgingEnv  # noqa: E402
 ROOT      = os.path.join(os.path.dirname(__file__), "..", "..")
 DATA_PATH = os.path.join(ROOT, "data", "spy_daily.csv")
 
-# ── Scenario presets ──────────────────────────────────────────────────────────
-# Entries that contain "data_path" use RealDataHedgingEnv; all others use
-# the synthetic RLHedgingEnv so the two are directly comparable in the UI.
-
+# Presets with "data_path" route to RealDataHedgingEnv; others use RLHedgingEnv.
 ENV_PRESETS: dict[str, dict] = {
-    # ── Real market data (primary) ──────────────────────────────────
     "SPY Historical (Real Data)": dict(
         data_path=DATA_PATH,
         window_size=30,
@@ -29,7 +25,6 @@ ENV_PRESETS: dict[str, dict] = {
         transaction_cost=0.001,
         augment_vol=False,          # pure historical replay — no vol scaling
     ),
-    # ── Synthetic GBM baselines (kept for controlled comparison) ────
     "Base Market": dict(
         s0=100.0, mu=0.05, sigma=0.20, dt=1/252, maturity=30/252,
         strike=100.0, rate=0.01, transaction_cost=0.001,
@@ -76,7 +71,6 @@ def _initial_row(env, env_kwargs: dict, obs: np.ndarray) -> dict:
     strike = float(getattr(env, "strike", env_kwargs.get("strike", 100.0)))
     sigma  = float(getattr(env, "sigma",  env_kwargs.get("sigma", 0.2)))
 
-    # option value at reset
     option_val = 0.0
     if hasattr(env, "option") and env.option is not None:
         try:
@@ -145,7 +139,6 @@ def collect_episode(
     while not done and step < max_steps:
         step += 1
 
-        # ── Determine action ─────────────────────────────────────────
         try:
             if strategy == "no_hedge":
                 action = np.array([0.0])
@@ -161,7 +154,6 @@ def collect_episode(
         except Exception:
             action = np.array([0.0])
 
-        # ── Step environment ─────────────────────────────────────────
         try:
             obs, _reward, terminated, truncated, info = env.step(action)
             obs  = np.asarray(obs, dtype=float).ravel()
