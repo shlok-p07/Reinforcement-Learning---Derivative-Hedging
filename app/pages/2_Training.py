@@ -80,7 +80,7 @@ def _kill_existing(agent: str) -> None:
     try:
         with open(pid_file, encoding="utf-8") as fh:
             pid = int(fh.read().strip())
-        os.kill(pid, signal.SIGTERM)
+        os.kill(pid, signal.SIGKILL)  # SIGKILL: immediate kernel termination, cannot be delayed or blocked
     except (OSError, ValueError, ProcessLookupError):
         pass  # already dead or unreadable
     finally:
@@ -277,11 +277,12 @@ def _launch(agent: str) -> bool:
         return False
 
 
-if train_ppo_btn or train_both_btn:
+# Guard: don't re-launch an agent that is already running
+if (train_ppo_btn or train_both_btn) and not st.session_state.get("training_ppo"):
     if _launch("ppo"):
         st.session_state.training_ppo = True
 
-if train_sac_btn or train_both_btn:
+if (train_sac_btn or train_both_btn) and not st.session_state.get("training_sac"):
     if _launch("sac"):
         st.session_state.training_sac = True
 
@@ -291,25 +292,27 @@ if train_sac_btn or train_both_btn:
 _live_progress()
 
 
-# Learning curves (static — reloaded on page visit)
+@st.fragment(run_every="10s")
+def _learning_curves_live() -> None:
+    """Auto-refreshes every 10 s so curves appear live during training and instantly on completion."""
+    st.markdown('<div class="ws-section-header">LEARNING CURVES</div>', unsafe_allow_html=True)
 
-st.markdown('<div class="ws-section-header">LEARNING CURVES</div>', unsafe_allow_html=True)
+    ppo_data = _load_curve("ppo")
+    sac_data = _load_curve("sac")
 
-ppo_data = _load_curve("ppo")
-sac_data = _load_curve("sac")
+    if ppo_data is None and sac_data is None:
+        st.markdown(
+            """<div class="ws-card" style="text-align:center;padding:40px;">
+              <div style="font-size:11px;letter-spacing:3px;color:#1e3a5f;
+                   font-family:'JetBrains Mono',monospace;">NO DATA</div>
+              <div style="font-size:14px;color:#6b7a8d;margin-top:12px;">
+                No training history yet. Start training above to see reward curves appear here.
+              </div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        return
 
-if ppo_data is None and sac_data is None:
-    st.markdown(
-        """<div class="ws-card" style="text-align:center;padding:40px;">
-          <div style="font-size:11px;letter-spacing:3px;color:#1e3a5f;
-               font-family:'JetBrains Mono',monospace;">NO DATA</div>
-          <div style="font-size:14px;color:#6b7a8d;margin-top:12px;">
-            No training history yet. Start training above to see reward curves appear here.
-          </div>
-        </div>""",
-        unsafe_allow_html=True,
-    )
-else:
     fig = learning_curves(ppo_data, sac_data)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
@@ -355,6 +358,9 @@ else:
                 </div>""",
                 unsafe_allow_html=True,
             )
+
+
+_learning_curves_live()
 
 
 # Hyperparameter reference

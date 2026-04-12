@@ -58,8 +58,11 @@ class ProgressFileCallback(BaseCallback):
         self._phase = "starting"
 
     def _write(self) -> None:
+        # Write to a temp file then atomically rename so the reader never sees
+        # a truncated / partially-written JSON.
         try:
-            with open(self._path, "w", encoding="utf-8") as fh:
+            tmp = self._path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(
                     {
                         "timesteps": int(self.num_timesteps),
@@ -68,6 +71,7 @@ class ProgressFileCallback(BaseCallback):
                     },
                     fh,
                 )
+            os.replace(tmp, self._path)  # atomic on POSIX
         except OSError:
             pass
 
