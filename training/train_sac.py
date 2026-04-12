@@ -60,7 +60,7 @@ class ProgressFileCallback(BaseCallback):
         if self.num_timesteps >= self._next_write:
             self._next_write = self.num_timesteps + self._every
             try:
-                with open(self._path, "w") as fh:
+                with open(self._path, "w", encoding="utf-8") as fh:
                     json.dump(
                         {"timesteps": int(self.num_timesteps), "total": self._total}, fh
                     )
@@ -145,7 +145,7 @@ if __name__ == "__main__":
     model.learn(
         total_timesteps=TOTAL_TIMESTEPS,
         callback=callbacks,
-        progress_bar=True,
+        progress_bar=False,  # ProgressFileCallback handles UI updates instead
         reset_num_timesteps=True,
     )
     model.save(MODEL_PATH)
