@@ -47,7 +47,7 @@ PROGRESS_PATH  = os.path.join(ROOT, LOG_DIR, "progress.json")
 
 
 class ProgressFileCallback(BaseCallback):
-    """Writes current timestep to a JSON file every N steps for live UI monitoring."""
+    """Writes timestep + training phase to a JSON file for live UI monitoring."""
 
     def __init__(self, path: str, total_steps: int, write_every: int = 2_000):
         super().__init__(verbose=0)
@@ -55,17 +55,31 @@ class ProgressFileCallback(BaseCallback):
         self._total = total_steps
         self._every = write_every
         self._next_write = write_every
+        self._phase = "starting"
+
+    def _write(self) -> None:
+        try:
+            with open(self._path, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "timesteps": int(self.num_timesteps),
+                        "total":     self._total,
+                        "phase":     self._phase,
+                    },
+                    fh,
+                )
+        except OSError:
+            pass
+
+    def _on_training_start(self) -> None:
+        self._phase = "collecting"
+        self._write()
 
     def _on_step(self) -> bool:
+        self._phase = "collecting"
         if self.num_timesteps >= self._next_write:
             self._next_write = self.num_timesteps + self._every
-            try:
-                with open(self._path, "w", encoding="utf-8") as fh:
-                    json.dump(
-                        {"timesteps": int(self.num_timesteps), "total": self._total}, fh
-                    )
-            except OSError:
-                pass
+            self._write()
         return True
 
 
