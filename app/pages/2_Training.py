@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -60,6 +61,33 @@ def _load_progress(agent: str) -> dict | None:
 
 def _model_exists(name: str) -> bool:
     return os.path.exists(os.path.join(ROOT, "models", f"{name}_hedger.zip"))
+
+
+def _pid_path(agent: str) -> str:
+    return os.path.join(ROOT, "results", "learning_curves", agent, "training.pid")
+
+
+def _kill_existing(agent: str) -> None:
+    """Kill a still-running training subprocess for this agent (if any).
+
+    Without this, re-clicking 'Retrain' while a run is in progress leaves the old
+    process alive.  Both processes then write to the same progress.json, causing
+    the bar to bounce backwards as each overwrites the other's values.
+    """
+    pid_file = _pid_path(agent)
+    if not os.path.exists(pid_file):
+        return
+    try:
+        with open(pid_file, encoding="utf-8") as fh:
+            pid = int(fh.read().strip())
+        os.kill(pid, signal.SIGTERM)
+    except (OSError, ValueError, ProcessLookupError):
+        pass  # already dead or unreadable
+    finally:
+        try:
+            os.remove(pid_file)
+        except OSError:
+            pass
 
 
 def _stale_files(agent: str) -> list[str]:
@@ -221,6 +249,7 @@ st.markdown('<hr style="border-color:#1e3a5f;">', unsafe_allow_html=True)
 
 def _launch(agent: str) -> bool:
     """Start a training subprocess, returning True on success."""
+    _kill_existing(agent)  # stop any previous run to prevent two processes racing on progress.json
     script = os.path.join(ROOT, "training", f"train_{agent}.py")
     if not os.path.exists(script):
         st.error(f"Training script not found: {script}")
@@ -232,12 +261,16 @@ def _launch(agent: str) -> bool:
         # Redirect stdout/stderr to DEVNULL — SB3 + tqdm output would fill the OS
         # pipe buffer and block the subprocess once the parent (Streamlit) stops
         # draining it.  Progress is tracked via progress.json instead.
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [sys.executable, script],
             cwd=os.path.abspath(ROOT),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        # Persist PID so a future retrain click can terminate this process
+        os.makedirs(os.path.dirname(_pid_path(agent)), exist_ok=True)
+        with open(_pid_path(agent), "w", encoding="utf-8") as fh:
+            fh.write(str(proc.pid))
         return True
     except Exception as exc:
         st.error(f"Failed to launch {agent.upper()} training: {exc}")

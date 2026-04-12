@@ -153,9 +153,10 @@ if __name__ == "__main__":
     if os.path.exists(existing):
         print("\nLoading existing PPO model — continuing training on real SPY data…")
         model = PPO.load(existing, env=train_env, verbose=1)
-        model.tensorboard_log = None   # prevent crash if tensorboard not installed
-        model.clip_range      = 0.2
-        model.learning_rate   = 5e-5  # lower LR for fine-tuning
+        model.tensorboard_log = None  # prevent crash if tensorboard not installed
+        # NOTE: do NOT overwrite model.clip_range — SB3 stores it as a callable
+        # schedule; replacing with a float causes TypeError in ppo.train().
+        model.learning_rate = 5e-5    # lower LR for fine-tuning
     else:
         print("\nNo existing model — training PPO from scratch on real SPY data…")
         model = PPO(
