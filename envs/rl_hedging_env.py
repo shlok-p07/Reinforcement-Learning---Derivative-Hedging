@@ -101,17 +101,12 @@ class RLHedgingEnv(gym.Env):
             dtype=np.float32,
         )
 
-        # Episode state — initialised here so linters see them in __init__
         self.tau: float = maturity
         self.spot: float = s0
         self.stock_position: float = 0.0
         self.cash: float = 0.0
         self.portfolio_value: float = 0.0
         self.total_tc: float = 0.0
-
-    # ------------------------------------------------------------------
-    # Gymnasium API
-    # ------------------------------------------------------------------
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -137,31 +132,26 @@ class RLHedgingEnv(gym.Env):
         action = float(np.clip(np.asarray(action, dtype=float).flat[0], -1.5, 1.5))
         prev_v = self.portfolio_value
 
-        # 1. Market evolves
         self.spot, realized_vol = self.simulator.step()
         self.tau = max(self.tau - self.dt, 1e-8)
 
-        # 2. Rebalance at new spot
         trade = action - self.stock_position
         tc = abs(trade) * self.spot * self.transaction_cost
         self.cash -= trade * self.spot + tc
         self.stock_position = action
         self.total_tc += tc
 
-        # 3. Mark portfolio to market
         option_value = self.option.price(self.spot, self.tau)
         self.portfolio_value = (
             self.stock_position * self.spot + self.cash - option_value
         )
 
-        # 4. Reward: minimise hedging-error variance, risk-averse on downside
         delta_v = self.portfolio_value - prev_v
         reward = (
             -self.lambda_hedge * delta_v ** 2
             - 0.5 * self.lambda_hedge * max(-delta_v, 0.0) ** 2
         )
 
-        # 5. Strong terminal penalty for residual exposure at settlement
         terminated = self.tau <= 1e-8
         if terminated:
             reward -= self.lambda_terminal * self.portfolio_value ** 2
@@ -181,10 +171,6 @@ class RLHedgingEnv(gym.Env):
 
     def render(self, mode="human"):  # noqa: ARG002
         pass
-
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
 
     def _obs(self) -> np.ndarray:
         tau_safe = max(self.tau, 1e-8)

@@ -3,8 +3,17 @@ __pycache__/
 *.pyc
 .DS_Store
 .ipynb_checkpoints/
-models/
-data/
-.env
 .mypy_cache/
+.env
 
+# Model checkpoints are large — keep only final trained zips
+models/ppo_checkpoints/
+models/sac_checkpoints/
+models/ppo_hedger_best/
+models/sac_hedger_best/
+models/.DS_Store
+
+# Generated outputs not needed for the app
+results/tensorboard/
+results/plots/
+results/learning_curves/*/progress.json

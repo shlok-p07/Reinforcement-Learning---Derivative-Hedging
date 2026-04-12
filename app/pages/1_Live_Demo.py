@@ -1,23 +1,19 @@
 """Live Demo — watch the agent hedge step-by-step."""
 
-import os, sys, time
+import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import streamlit as st
-import numpy as np
-import pandas as pd
 
-from components.charts import inject_css, live_episode_chart, STRATEGY_COLOR, BG2, TEXT, GREEN, GOLD, RED  # noqa
+from components.charts import inject_css, live_episode_chart, animated_episode_chart  # noqa
 from components.runner import collect_episode, load_model, ENV_PRESETS  # noqa
 
 st.set_page_config(page_title="Live Demo | RL Hedging", page_icon=None, layout="wide")
 st.markdown(inject_css(), unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────
 # Sidebar controls
-# ─────────────────────────────────────────────
 
 with st.sidebar:
     st.markdown("## LIVE DEMO CONTROLS")
@@ -44,8 +40,9 @@ with st.sidebar:
         options=["Slow", "Normal", "Fast", "Instant"],
         value="Normal",
     )
-    SPEED_MAP = {"Slow": 0.15, "Normal": 0.07, "Fast": 0.02, "Instant": 0.0}
-    delay = SPEED_MAP[speed]
+    # Frame duration in ms for the client-side Plotly animation
+    SPEED_MAP = {"Slow": 150, "Normal": 70, "Fast": 20, "Instant": 0}
+    frame_ms  = SPEED_MAP[speed]
 
     st.markdown('<hr style="border-color:#1e3a5f;">', unsafe_allow_html=True)
 
@@ -53,25 +50,38 @@ with st.sidebar:
 
     st.markdown('<hr style="border-color:#1e3a5f;">', unsafe_allow_html=True)
 
-    # Show scenario info
+    # Show scenario info — real-data preset has different keys
     env_kw = ENV_PRESETS[scenario_name]
-    st.markdown(f"""
+    is_real = "data_path" in env_kw
+    if is_real:
+        st.markdown(f"""
+    **Scenario Parameters**
+    | Param | Value |
+    |---|---|
+    | Source | SPY Historical |
+    | Window | {env_kw.get('window_size', 30)} days |
+    | Moneyness | {env_kw.get('strike_moneyness', 1.0):.0%} |
+    | TC Rate | {env_kw['transaction_cost']:.2%} |
+    | Maturity | 30 days |
+    | Regime Switch | No |
+    """)
+    else:
+        sigma = env_kw['sigma']
+        st.markdown(f"""
     **Scenario Parameters**
     | Param | Value |
     |---|---|
     | Spot | {env_kw['s0']} |
     | Strike | {env_kw['strike']} |
-    | Vol (model) | {env_kw['sigma']:.0%} |
-    | Realized Vol | {env_kw.get('realized_sigma', env_kw['sigma']):.0%} |
+    | Vol (model) | {sigma:.0%} |
+    | Realized Vol | {env_kw.get('realized_sigma', sigma):.0%} |
     | TC Rate | {env_kw['transaction_cost']:.2%} |
     | Maturity | 30 days |
     | Regime Switch | {'Yes' if env_kw.get('regime_switching') else 'No'} |
     """)
 
 
-# ─────────────────────────────────────────────
 # Header
-# ─────────────────────────────────────────────
 
 st.markdown(
     f'<div class="ws-title">LIVE HEDGING DEMO</div>'
@@ -81,9 +91,7 @@ st.markdown(
 st.markdown('<hr style="border-color:#1e3a5f;">', unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────
 # Run episode
-# ─────────────────────────────────────────────
 
 run_col, _ = st.columns([1, 3])
 with run_col:
@@ -118,17 +126,13 @@ if run_btn:
     st.session_state.episode_df = full_df
     st.session_state.compare_df = compare_df
 
-    if delay > 0:
-        for i in range(2, len(full_df) + 1):
-            partial = full_df.iloc[:i]
-            with chart_placeholder:
-                fig = live_episode_chart(partial, strategy)
-                st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
-            time.sleep(delay)
-    else:
-        with chart_placeholder:
+    # Build all frames client-side — single render, no Python loop, no blink
+    with chart_placeholder:
+        if frame_ms > 0:
+            fig = animated_episode_chart(full_df, strategy, frame_duration_ms=frame_ms)
+        else:
             fig = live_episode_chart(full_df, strategy)
-            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 elif st.session_state.episode_df is not None:
     fig = live_episode_chart(st.session_state.episode_df, strategy)
@@ -143,9 +147,7 @@ else:
     )
 
 
-# ─────────────────────────────────────────────
 # Episode summary metrics
-# ─────────────────────────────────────────────
 
 if st.session_state.episode_df is not None:
     df = st.session_state.episode_df

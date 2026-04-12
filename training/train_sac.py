@@ -1,35 +1,28 @@
 """
-SAC training on real SPY market data.
+SAC training on real SPY market data (~1,200 distinct 30-day windows, 5-year history).
 
-SAC's off-policy replay buffer naturally handles the temporal structure
-of real market windows — it stores transitions from many different historical
-periods and learns from them in random mini-batches, which reduces
-overfitting to any single market regime.
-
-Continuation training
----------------------
-If models/sac_hedger.zip already exists the script loads it and continues
-training.  Delete the file to restart from scratch.
+Loads and continues from models/sac_hedger.zip if it exists; delete to retrain from scratch.
+Hyperparams: lr=3e-4, buffer=200k, batch=256, γ=0.99, τ=0.005, ent_coef=auto, use_sde=True.
 """
 
+import json
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from stable_baselines3 import SAC
-from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.callbacks import (
-    EvalCallback,
-    CheckpointCallback,
+    BaseCallback,
     CallbackList,
+    CheckpointCallback,
+    EvalCallback,
 )
+from stable_baselines3.common.vec_env import DummyVecEnv
 
 from envs.real_data_env import RealDataHedgingEnv
 
-# ------------------------------------------------------------------
 # Config
-# ------------------------------------------------------------------
 
 ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(ROOT, "data", "spy_daily.csv")
@@ -50,6 +43,30 @@ N_EVAL_EPISODES = 100
 MODEL_PATH     = "models/sac_hedger"
 CHECKPOINT_DIR = "models/sac_checkpoints"
 LOG_DIR        = "results/learning_curves/sac"
+PROGRESS_PATH  = os.path.join(ROOT, LOG_DIR, "progress.json")
+
+
+class ProgressFileCallback(BaseCallback):
+    """Writes current timestep to a JSON file every N steps for live UI monitoring."""
+
+    def __init__(self, path: str, total_steps: int, write_every: int = 2_000):
+        super().__init__(verbose=0)
+        self._path = path
+        self._total = total_steps
+        self._every = write_every
+        self._next_write = write_every
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps >= self._next_write:
+            self._next_write = self.num_timesteps + self._every
+            try:
+                with open(self._path, "w") as fh:
+                    json.dump(
+                        {"timesteps": int(self.num_timesteps), "total": self._total}, fh
+                    )
+            except OSError:
+                pass
+        return True
 
 
 def make_env(seed: int | None = None):
@@ -69,6 +86,10 @@ if __name__ == "__main__":
     os.makedirs(LOG_DIR, exist_ok=True)
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     os.makedirs("models", exist_ok=True)
+
+    # Clear stale progress file so the UI starts from 0
+    if os.path.exists(PROGRESS_PATH):
+        os.remove(PROGRESS_PATH)
 
     _probe = RealDataHedgingEnv(**ENV_KWARGS)
     print(f"\n  Real data windows available: {_probe.n_windows:,}")
@@ -94,11 +115,12 @@ if __name__ == "__main__":
             name_prefix="sac",
             verbose=0,
         ),
+        ProgressFileCallback(PROGRESS_PATH, TOTAL_TIMESTEPS, write_every=2_000),
     ])
 
     existing = f"{MODEL_PATH}.zip"
     if os.path.exists(existing):
-        print(f"\nLoading existing SAC model — continuing training on real SPY data…")
+        print("\nLoading existing SAC model — continuing training on real SPY data…")
         model = SAC.load(existing, env=train_env, verbose=1)
         model.learning_rate = 1e-4
     else:
@@ -124,7 +146,7 @@ if __name__ == "__main__":
         total_timesteps=TOTAL_TIMESTEPS,
         callback=callbacks,
         progress_bar=True,
-        reset_num_timesteps=False,
+        reset_num_timesteps=True,
     )
     model.save(MODEL_PATH)
 

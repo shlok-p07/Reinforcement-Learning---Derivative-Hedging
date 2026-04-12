@@ -1,11 +1,14 @@
 """Training Monitor — live progress bars, learning curves, model status."""
 
-import os, sys
+import json
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import streamlit as st
 import numpy as np
+import streamlit as st
 import subprocess
 
 from components.charts import inject_css, learning_curves, GREEN, GOLD  # noqa
@@ -18,7 +21,7 @@ ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 TOTAL_STEPS = {"ppo": 500_000, "sac": 300_000}
 AGENT_COLOR = {"ppo": GREEN, "sac": GOLD}
 AGENT_LABEL = {
-    "ppo": "PPO — Proximal Policy Optimisation",
+    "ppo": "PPO — Proximal Policy Optimization",
     "sac": "SAC — Soft Actor-Critic",
 }
 
@@ -40,27 +43,44 @@ def _load_curve(agent: str) -> dict | None:
         return None
 
 
+def _load_progress(agent: str) -> dict | None:
+    """Read the lightweight progress.json written every ~2k steps by ProgressFileCallback."""
+    path = os.path.join(ROOT, "results", "learning_curves", agent, "progress.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if "timesteps" not in data:
+            return None
+        return data
+    except Exception:
+        return None
+
+
 def _model_exists(name: str) -> bool:
     return os.path.exists(os.path.join(ROOT, "models", f"{name}_hedger.zip"))
 
 
-# ─────────────────────────────────────────────
+def _stale_files(agent: str) -> list[str]:
+    """Return paths of checkpoint/progress files to wipe before a fresh training run."""
+    base = os.path.join(ROOT, "results", "learning_curves", agent)
+    return [
+        os.path.join(base, "evaluations.npz"),
+        os.path.join(base, "progress.json"),
+    ]
+
+
 # Session state — track which agents are running
-# ─────────────────────────────────────────────
 
 for _a in ("ppo", "sac"):
     if f"training_{_a}" not in st.session_state:
         st.session_state[f"training_{_a}"] = False
 
 
-# ─────────────────────────────────────────────
-# Live progress fragment — polls every 3 s
-# Defined at top level so Streamlit can manage it consistently.
-# ─────────────────────────────────────────────
-
-@st.fragment(run_every="3s")
+@st.fragment(run_every="2s")
 def _live_progress() -> None:
-    """Re-runs every 3 s; reads evaluations.npz to drive progress bars."""
+    """Re-runs every 2 s; reads progress.json (fast) and evaluations.npz (rewards)."""
     active = [a for a in ("ppo", "sac") if st.session_state.get(f"training_{a}")]
     if not active:
         return
@@ -72,28 +92,34 @@ def _live_progress() -> None:
     for agent in active:
         total = TOTAL_STEPS[agent]
         color = AGENT_COLOR[agent]
-        data  = _load_curve(agent)
+        prog  = _load_progress(agent)   # lightweight JSON — updates every ~2k steps
+        data  = _load_curve(agent)      # NPZ — updates every ~10k steps (has rewards)
 
-        if data is None:
-            # Subprocess just launched — .npz not written yet
+        # Neither file exists yet — subprocess still initializing
+        if prog is None and data is None:
             all_done = False
             st.markdown(
                 f'<div class="ws-card" style="margin-bottom:12px;">'
                 f'<div class="ws-card-title" style="color:{color};">'
                 f'{AGENT_LABEL[agent]}</div>'
                 f'<div style="font-size:12px;color:#6b7a8d;margin:10px 0 6px;">'
-                f'Starting up — building environments and initialising the neural network…'
+                f'Starting up — building environments and initializing the neural network…'
                 f'</div></div>',
                 unsafe_allow_html=True,
             )
-            st.progress(0.0, text="Waiting for first checkpoint…")
+            st.progress(0.0, text="Waiting for first steps…")
             continue
 
-        current = int(data["timesteps"][-1])
-        pct     = min(current / total, 1.0)
-        mean_r  = float(data["results"][-1].mean())
-        best_r  = float(data["results"].mean(axis=1).max())
-        done    = pct >= 1.0 and _model_exists(agent)
+        # Use progress.json for step count (more frequent), NPZ for rewards (less frequent)
+        if prog is not None:
+            current = int(prog["timesteps"])
+        elif data is not None:
+            current = int(data["timesteps"][-1])
+        else:
+            current = 0
+
+        pct  = min(current / total, 1.0)
+        done = pct >= 1.0 and _model_exists(agent)
 
         if not done:
             all_done = False
@@ -112,17 +138,25 @@ def _live_progress() -> None:
         )
 
         bar_label = (
-            f"{current:,} / {total:,} steps  —  {pct:.0%} complete"
+            f"{current:,} / {total:,} steps  —  {pct:.1%} complete"
             if not done
             else f"Training finished — {current:,} steps completed"
         )
         st.progress(pct, text=bar_label)
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Progress",        f"{pct:.1%}")
-        c2.metric("Steps Completed", f"{current:,}")
-        c3.metric("Latest Reward",   f"{mean_r:+.4f}")
-        c4.metric("Best Reward",     f"{best_r:+.4f}")
+        # Reward metrics — only available once NPZ has at least one checkpoint
+        if data is not None:
+            mean_r = float(data["results"][-1].mean())
+            best_r = float(data["results"].mean(axis=1).max())
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Progress",        f"{pct:.1%}")
+            c2.metric("Steps Completed", f"{current:,}")
+            c3.metric("Latest Reward",   f"{mean_r:+.4f}")
+            c4.metric("Best Reward",     f"{best_r:+.4f}")
+        else:
+            c1, c2 = st.columns(2)
+            c1.metric("Progress",        f"{pct:.1%}")
+            c2.metric("Steps Completed", f"{current:,}")
 
         if done:
             st.success(
@@ -130,7 +164,7 @@ def _live_progress() -> None:
                 "The model is ready — head to Live Demo or Evaluation to use it."
             )
 
-    st.caption("Progress updates every 3 seconds automatically.")
+    st.caption("Progress updates every 2 seconds automatically.")
 
     # Clear session state AFTER rendering — avoids triggering a full rerun mid-fragment
     if all_done:
@@ -139,9 +173,7 @@ def _live_progress() -> None:
         st.rerun()
 
 
-# ─────────────────────────────────────────────
 # Sidebar
-# ─────────────────────────────────────────────
 
 with st.sidebar:
     st.markdown("## TRAINING CONTROLS")
@@ -151,9 +183,9 @@ with st.sidebar:
     for name in ["ppo", "sac"]:
         ok = _model_exists(name)
         badge = (
-            f'<span class="badge-live">● TRAINED</span>'
+            '<span class="badge-live">● TRAINED</span>'
             if ok else
-            f'<span class="badge-off">○ NOT FOUND</span>'
+            '<span class="badge-off">○ NOT FOUND</span>'
         )
         running = st.session_state.get(f"training_{name}", False)
         if running:
@@ -169,9 +201,7 @@ with st.sidebar:
     train_both_btn = st.button("Train Both", type="primary", width="stretch")
 
 
-# ─────────────────────────────────────────────
 # Header
-# ─────────────────────────────────────────────
 
 st.markdown('<div class="ws-title">TRAINING MONITOR</div>', unsafe_allow_html=True)
 st.markdown(
@@ -181,51 +211,48 @@ st.markdown(
 st.markdown('<hr style="border-color:#1e3a5f;">', unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────
 # Launch training processes
-# ─────────────────────────────────────────────
+
+def _launch(agent: str) -> bool:
+    """Start a training subprocess, returning True on success."""
+    script = os.path.join(ROOT, "training", f"train_{agent}.py")
+    if not os.path.exists(script):
+        st.error(f"Training script not found: {script}")
+        return False
+    try:
+        for stale in _stale_files(agent):
+            if os.path.exists(stale):
+                os.remove(stale)
+        # Redirect stdout/stderr to DEVNULL — SB3 + tqdm output would fill the OS
+        # pipe buffer and block the subprocess once the parent (Streamlit) stops
+        # draining it.  Progress is tracked via progress.json instead.
+        subprocess.Popen(
+            [sys.executable, script],
+            cwd=os.path.abspath(ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception as exc:
+        st.error(f"Failed to launch {agent.upper()} training: {exc}")
+        return False
+
 
 if train_ppo_btn or train_both_btn:
-    script = os.path.join(ROOT, "training", "train_ppo.py")
-    if not os.path.exists(script):
-        st.error(f"Training script not found: {script}")
-    else:
-        try:
-            # Remove stale checkpoint so fragment shows real progress, not old 100%
-            old_npz = os.path.join(ROOT, "results", "learning_curves", "ppo", "evaluations.npz")
-            if os.path.exists(old_npz):
-                os.remove(old_npz)
-            subprocess.Popen([sys.executable, script], cwd=ROOT)
-            st.session_state.training_ppo = True
-        except Exception as exc:
-            st.error(f"Failed to launch PPO training: {exc}")
+    if _launch("ppo"):
+        st.session_state.training_ppo = True
 
 if train_sac_btn or train_both_btn:
-    script = os.path.join(ROOT, "training", "train_sac.py")
-    if not os.path.exists(script):
-        st.error(f"Training script not found: {script}")
-    else:
-        try:
-            # Remove stale checkpoint so fragment shows real progress, not old 100%
-            old_npz = os.path.join(ROOT, "results", "learning_curves", "sac", "evaluations.npz")
-            if os.path.exists(old_npz):
-                os.remove(old_npz)
-            subprocess.Popen([sys.executable, script], cwd=ROOT)
-            st.session_state.training_sac = True
-        except Exception as exc:
-            st.error(f"Failed to launch SAC training: {exc}")
+    if _launch("sac"):
+        st.session_state.training_sac = True
 
 
-# ─────────────────────────────────────────────
 # Live progress bars (auto-refresh via fragment)
-# ─────────────────────────────────────────────
 
 _live_progress()
 
 
-# ─────────────────────────────────────────────
 # Learning curves (static — reloaded on page visit)
-# ─────────────────────────────────────────────
 
 st.markdown('<div class="ws-section-header">LEARNING CURVES</div>', unsafe_allow_html=True)
 
@@ -291,9 +318,7 @@ else:
             )
 
 
-# ─────────────────────────────────────────────
 # Hyperparameter reference
-# ─────────────────────────────────────────────
 
 st.markdown('<div class="ws-section-header">HYPERPARAMETERS</div>', unsafe_allow_html=True)
 
@@ -302,10 +327,10 @@ hp_col1, hp_col2 = st.columns(2)
 with hp_col1:
     st.markdown(
         """<div class="ws-card">
-          <div class="ws-card-title" style="color:#00d4aa;">PPO — PROXIMAL POLICY OPTIMISATION</div>
+          <div class="ws-card-title" style="color:#00d4aa;">PPO — PROXIMAL POLICY OPTIMIZATION</div>
           <table class="ws-table" style="margin-top:8px;">
             <tr><td style="color:#6b7a8d;">Learning Rate</td><td>1e-4</td></tr>
-            <tr><td style="color:#6b7a8d;">n_steps</td><td>4,096</td></tr>
+            <tr><td style="color:#6b7a8d;">n_steps</td><td>2,048</td></tr>
             <tr><td style="color:#6b7a8d;">Batch Size</td><td>256</td></tr>
             <tr><td style="color:#6b7a8d;">n_epochs</td><td>10</td></tr>
             <tr><td style="color:#6b7a8d;">gamma (discount)</td><td>0.99</td></tr>

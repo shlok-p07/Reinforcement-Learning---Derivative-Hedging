@@ -27,9 +27,7 @@ def _load_df() -> pd.DataFrame | None:
     return None
 
 
-# ─────────────────────────────────────────────
 # Sidebar
-# ─────────────────────────────────────────────
 
 with st.sidebar:
     st.markdown("## EVALUATION CONTROLS")
@@ -54,9 +52,7 @@ with st.sidebar:
         )
 
 
-# ─────────────────────────────────────────────
 # Re-run evaluation inline
-# ─────────────────────────────────────────────
 
 if run_eval:
     with st.spinner(f"Running evaluation ({n_episodes} episodes per strategy × scenario)…"):
@@ -106,9 +102,7 @@ if run_eval:
         st.rerun()
 
 
-# ─────────────────────────────────────────────
 # Header
-# ─────────────────────────────────────────────
 
 st.markdown('<div class="ws-title">STRATEGY EVALUATION DASHBOARD</div>', unsafe_allow_html=True)
 st.markdown('<div class="ws-subtitle">5 strategies × 4 market scenarios × 8 risk & performance metrics</div>', unsafe_allow_html=True)
@@ -136,9 +130,7 @@ else:
     df_view = df.copy()
 
 
-# ─────────────────────────────────────────────
 # Full results table
-# ─────────────────────────────────────────────
 
 st.markdown('<div class="ws-section-header">FULL RESULTS TABLE</div>', unsafe_allow_html=True)
 
@@ -174,9 +166,7 @@ styled = (
 st.dataframe(styled, width="stretch", height=420)
 
 
-# ─────────────────────────────────────────────
 # Charts
-# ─────────────────────────────────────────────
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Sharpe Comparison",
@@ -224,9 +214,7 @@ with tab5:
         st.markdown('<div style="text-align:center;padding:40px;color:#4a5568;">Click the button to generate P&L distributions (takes ~15s).</div>', unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────
 # Key findings
-# ─────────────────────────────────────────────
 
 st.markdown('<div class="ws-section-header">KEY FINDINGS</div>', unsafe_allow_html=True)
 
