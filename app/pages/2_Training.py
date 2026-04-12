@@ -137,8 +137,14 @@ def _live_progress() -> None:
             unsafe_allow_html=True,
         )
 
+        phase = (prog or {}).get("phase", "collecting")
+        phase_tag = {
+            "updating":  " · Running policy updates…",
+            "starting":  " · Initializing…",
+            "collecting": "",
+        }.get(phase, "")
         bar_label = (
-            f"{current:,} / {total:,} steps  —  {pct:.1%} complete"
+            f"{current:,} / {total:,} steps  —  {pct:.1%}{phase_tag}"
             if not done
             else f"Training finished — {current:,} steps completed"
         )
