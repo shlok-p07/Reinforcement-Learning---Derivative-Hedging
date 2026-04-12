@@ -17,3 +17,4 @@ models/.DS_Store
 results/tensorboard/
 results/plots/
 results/learning_curves/*/progress.json
+results/learning_curves/*/training.pid
