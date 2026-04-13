@@ -1,11 +1,11 @@
 {
   "ticker": "SPY",
-  "as_of": "2026-04-12",
-  "s0_last": 679.46,
-  "s0_first": 385.6,
-  "mu_annual": 0.1143,
+  "as_of": "2026-04-13",
+  "s0_last": 679.4,
+  "s0_first": 384.29,
+  "mu_annual": 0.1137,
   "sigma_annual": 0.1705,
-  "rvol_21d_last": 0.1987,
+  "rvol_21d_last": 0.1905,
   "dt": 0.003968,
   "n_obs": 1255,
   "note": "sigma_annual calibrated from 5-year daily log-returns. Use as the baseline sigma for RealDataHedgingEnv and GBM scenarios."

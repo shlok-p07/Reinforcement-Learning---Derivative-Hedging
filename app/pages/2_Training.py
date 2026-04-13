@@ -67,6 +67,20 @@ def _pid_path(agent: str) -> str:
     return os.path.join(ROOT, "results", "learning_curves", agent, "training.pid")
 
 
+def _pid_alive(agent: str) -> bool:
+    """Return True only if the training PID file exists AND the process is still running."""
+    pid_file = _pid_path(agent)
+    if not os.path.exists(pid_file):
+        return False
+    try:
+        with open(pid_file, encoding="utf-8") as fh:
+            pid = int(fh.read().strip())
+        os.kill(pid, 0)  # signal 0 = existence check only, raises OSError if dead
+        return True
+    except (OSError, ValueError, ProcessLookupError):
+        return False
+
+
 def _kill_existing(agent: str) -> None:
     """Kill a still-running training subprocess for this agent (if any).
 
@@ -109,6 +123,13 @@ for _a in ("ppo", "sac"):
 @st.fragment(run_every="2s")
 def _live_progress() -> None:
     """Re-runs every 2 s; reads progress.json (fast) and evaluations.npz (rewards)."""
+    # Auto-correct stale session flags: if the subprocess is no longer running
+    # (e.g. training finished, page was reloaded, or process was killed), clear
+    # the flag so the progress bar disappears and the completed stats show instead.
+    for _a in ("ppo", "sac"):
+        if st.session_state.get(f"training_{_a}") and not _pid_alive(_a):
+            st.session_state[f"training_{_a}"] = False
+
     active = [a for a in ("ppo", "sac") if st.session_state.get(f"training_{a}")]
     if not active:
         return
