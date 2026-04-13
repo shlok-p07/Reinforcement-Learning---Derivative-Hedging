@@ -18,17 +18,6 @@ st.set_page_config(
 )
 st.markdown(inject_css(), unsafe_allow_html=True)
 
-# Open Graph tags so shared links show the dashboard preview instead of the Streamlit logo
-_PREVIEW_IMAGE = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/RL/app/assets/preview.png"
-st.markdown(f"""
-<meta property="og:title" content="RL Derivative Hedging | Research Platform" />
-<meta property="og:description" content="PPO & SAC reinforcement learning agents benchmarked against delta hedging under real-world market conditions." />
-<meta property="og:image" content="{_PREVIEW_IMAGE}" />
-<meta property="og:type" content="website" />
-<meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:image" content="{_PREVIEW_IMAGE}" />
-""", unsafe_allow_html=True)
-
 ROOT        = os.path.join(os.path.dirname(__file__), "..")
 RESULTS_CSV = os.path.join(ROOT, "results", "evaluation_results.csv")
 MODEL_DIR   = os.path.join(ROOT, "models")
