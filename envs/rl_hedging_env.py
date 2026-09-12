@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from utils.market_simulator import Simulator  # noqa: E402
 from utils.black_scholes import EuropeanCallOption  # noqa: E402
+from utils.risk_objectives import RiskObjective  # noqa: E402
 
 
 class RLHedgingEnv(gym.Env):
@@ -64,6 +65,10 @@ class RLHedgingEnv(gym.Env):
         sigma_high: float = 0.35,
         lambda_hedge: float = 1.0,
         lambda_terminal: float = 5.0,
+        risk_objective: str = "quadratic",
+        cvar_alpha: float = 0.95,
+        cvar_weight: float = 1.0,
+        cvar_lr: float = 0.01,
         seed: int | None = None,
     ):
         super().__init__()
@@ -78,6 +83,17 @@ class RLHedgingEnv(gym.Env):
         self.transaction_cost = transaction_cost
         self.lambda_hedge = lambda_hedge
         self.lambda_terminal = lambda_terminal
+
+        # Reward objective. 'quadratic' reproduces the original behaviour exactly;
+        # 'cvar' adds a Rockafellar-Uryasev tail penalty. See utils/risk_objectives.py.
+        self.risk = RiskObjective(
+            kind=risk_objective,
+            lambda_hedge=lambda_hedge,
+            lambda_terminal=lambda_terminal,
+            cvar_alpha=cvar_alpha,
+            cvar_weight=cvar_weight,
+            cvar_lr=cvar_lr,
+        )
 
         self.simulator = Simulator(
             s0=s0, mu=mu, sigma=sigma, dt=dt, seed=seed,
@@ -147,14 +163,11 @@ class RLHedgingEnv(gym.Env):
         )
 
         delta_v = self.portfolio_value - prev_v
-        reward = (
-            -self.lambda_hedge * delta_v ** 2
-            - 0.5 * self.lambda_hedge * max(-delta_v, 0.0) ** 2
-        )
+        reward = self.risk.step_reward(delta_v)
 
         terminated = self.tau <= 1e-8
         if terminated:
-            reward -= self.lambda_terminal * self.portfolio_value ** 2
+            reward += self.risk.terminal_reward(self.portfolio_value)
 
         info = {
             "portfolio_value": self.portfolio_value,
