@@ -6,6 +6,7 @@ Hyperparams: n_steps=2048, batch_size=256, n_epochs=10, γ=0.99, λ=0.95, clip=0
              ent_coef=0.005, lr=1e-4 (reduced to 5e-5 when fine-tuning).
 """
 
+import argparse
 import json
 import os
 import sys
@@ -105,13 +106,58 @@ class ProgressFileCallback(BaseCallback):
         self._write()  # always write before gradient updates start
 
 
-def make_env(seed: int | None = None):
+def make_env(seed: int | None = None, extra: dict | None = None):
+    kwargs = {**ENV_KWARGS, **(extra or {})}
+
     def _init():
-        return RealDataHedgingEnv(**ENV_KWARGS, seed=seed)
+        return RealDataHedgingEnv(**kwargs, seed=seed)
     return _init
 
 
+def parse_args():
+    ap = argparse.ArgumentParser(description="Train PPO hedging agent on real SPY data.")
+    ap.add_argument(
+        "--risk-objective", choices=["quadratic", "cvar"], default="quadratic",
+        help="Reward objective. 'quadratic' minimises mean squared hedging error "
+             "(tail-agnostic); 'cvar' adds a Rockafellar-Uryasev tail penalty.",
+    )
+    ap.add_argument("--cvar-alpha", type=float, default=0.95,
+                    help="CVaR confidence level; 0.95 targets the worst 5%% of episodes.")
+    ap.add_argument("--cvar-weight", type=float, default=1.0,
+                    help="Weight on the CVaR term relative to squared-error terms.")
+    ap.add_argument(
+        "--split", choices=["all", "train", "test"], default="all",
+        help="Temporal window split. 'all' uses every window (regime coverage, but "
+             "leaks across time). 'train' holds out the most recent period with an "
+             "embargo, so results on 'test' are genuinely out-of-sample.",
+    )
+    ap.add_argument("--train-frac", type=float, default=0.8,
+                    help="Fraction of history assigned to the training split.")
+    ap.add_argument("--timesteps", type=int, default=TOTAL_TIMESTEPS)
+    ap.add_argument("--model-path", default=MODEL_PATH,
+                    help="Output path without the .zip extension.")
+    return ap.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
+    TOTAL_TIMESTEPS = args.timesteps
+    MODEL_PATH = args.model_path
+    # Derive run-specific output dirs from the model name so that training a
+    # variant (e.g. --model-path models/ppo_hedger_cvar) does not overwrite the
+    # baseline run's learning curves, checkpoints or progress file.
+    RUN_NAME = os.path.basename(MODEL_PATH)
+    if RUN_NAME != "ppo_hedger":
+        LOG_DIR = f"results/learning_curves/{RUN_NAME}"
+        CHECKPOINT_DIR = f"models/{RUN_NAME}_checkpoints"
+        PROGRESS_PATH = os.path.join(ROOT, LOG_DIR, "progress.json")
+    ENV_EXTRA = dict(
+        risk_objective=args.risk_objective,
+        cvar_alpha=args.cvar_alpha,
+        cvar_weight=args.cvar_weight,
+        split=args.split,
+        train_frac=args.train_frac,
+    )
     if not os.path.exists(DATA_PATH):
         print(
             f"\nERROR: {DATA_PATH} not found.\n"
@@ -128,12 +174,13 @@ if __name__ == "__main__":
         os.remove(PROGRESS_PATH)
 
     # Report how many real windows are available
-    _probe = RealDataHedgingEnv(**ENV_KWARGS)
-    print(f"\n  Real data windows available: {_probe.n_windows:,}")
+    _probe = RealDataHedgingEnv(**ENV_KWARGS, **ENV_EXTRA)
+    print(f"\n  Real data windows available: {_probe.n_windows:,}  (split={args.split})")
+    print(f"  Reward objective: {_probe.risk!r}")
     del _probe
 
-    train_env = DummyVecEnv([make_env(seed=i) for i in range(N_ENVS)])
-    eval_env  = DummyVecEnv([make_env(seed=999)])
+    train_env = DummyVecEnv([make_env(seed=i, extra=ENV_EXTRA) for i in range(N_ENVS)])
+    eval_env  = DummyVecEnv([make_env(seed=999, extra=ENV_EXTRA)])
 
     callbacks = CallbackList([
         EvalCallback(
