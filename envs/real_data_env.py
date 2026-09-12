@@ -25,6 +25,7 @@ from gymnasium import spaces
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from utils.black_scholes import EuropeanCallOption  # noqa: E402
+from utils.risk_objectives import RiskObjective  # noqa: E402
 
 
 class RealDataHedgingEnv(gym.Env):
@@ -72,6 +73,12 @@ class RealDataHedgingEnv(gym.Env):
         lambda_hedge: float = 1.0,
         lambda_terminal: float = 5.0,
         augment_vol: bool = True,
+        risk_objective: str = "quadratic",
+        cvar_alpha: float = 0.95,
+        cvar_weight: float = 1.0,
+        cvar_lr: float = 0.01,
+        split: str = "all",
+        train_frac: float = 0.8,
         seed: int | None = None,
     ):
         super().__init__()
@@ -83,7 +90,18 @@ class RealDataHedgingEnv(gym.Env):
         self.lambda_hedge      = lambda_hedge
         self.lambda_terminal   = lambda_terminal
         self.augment_vol       = augment_vol
+        self.split             = split
+        self.train_frac        = train_frac
         self.dt                = 1 / 252
+
+        self.risk = RiskObjective(
+            kind=risk_objective,
+            lambda_hedge=lambda_hedge,
+            lambda_terminal=lambda_terminal,
+            cvar_alpha=cvar_alpha,
+            cvar_weight=cvar_weight,
+            cvar_lr=cvar_lr,
+        )
 
         if not os.path.exists(data_path):
             raise FileNotFoundError(
@@ -107,7 +125,7 @@ class RealDataHedgingEnv(gym.Env):
                 f"only {n} available.  Run generate_data.py to fetch more history."
             )
 
-        self._starts = np.arange(0, n - window_size)
+        self._starts = self._make_starts(n)
         self._rng    = np.random.default_rng(seed)
 
         self.observation_space = spaces.Box(
@@ -135,6 +153,39 @@ class RealDataHedgingEnv(gym.Env):
         self.option: EuropeanCallOption = EuropeanCallOption(
             self.strike, self.sigma, self.rate
         )
+
+    def _make_starts(self, n: int) -> np.ndarray:
+        """Window start indices for the requested temporal split.
+
+        Windows overlap, so a naive chronological cut still lets a training
+        window run past the boundary and overlap the first test window.  An
+        embargo of ``window_size`` days is dropped at the seam to remove that
+        leakage (the purged / embargoed split of Lopez de Prado, *Advances in
+        Financial Machine Learning*, ch. 7).
+
+        ``split="all"`` reproduces the original behaviour: every window is
+        eligible, which is appropriate for a pure regime-coverage study but
+        leaks across time and so must not be used to claim out-of-sample
+        performance.
+        """
+        last = n - self.window_size
+        if self.split == "all":
+            return np.arange(0, last)
+
+        cut = int(last * self.train_frac)
+        if self.split == "train":
+            starts = np.arange(0, max(cut - self.window_size, 1))
+        elif self.split == "test":
+            starts = np.arange(cut, last)
+        else:
+            raise ValueError(f"split must be 'all', 'train' or 'test', got {self.split!r}")
+
+        if len(starts) == 0:
+            raise ValueError(
+                f"split={self.split!r} with train_frac={self.train_frac} leaves no "
+                f"usable windows (n={n}, window_size={self.window_size})."
+            )
+        return starts
 
     def reset(self, seed: int | None = None, options=None):
         super().reset(seed=seed)
@@ -192,14 +243,11 @@ class RealDataHedgingEnv(gym.Env):
         )
 
         delta_v = self.portfolio_value - prev_v
-        reward  = (
-            -self.lambda_hedge * delta_v ** 2
-            - 0.5 * self.lambda_hedge * max(-delta_v, 0.0) ** 2
-        )
+        reward  = self.risk.step_reward(delta_v)
 
         terminated = self.tau <= 1e-8
         if terminated:
-            reward -= self.lambda_terminal * self.portfolio_value ** 2
+            reward += self.risk.terminal_reward(self.portfolio_value)
 
         info = {
             "portfolio_value": self.portfolio_value,
